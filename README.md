@@ -8,6 +8,12 @@ Since MCCURLConnection uses NSOperationQueue to control connections flow you may
 * Suspend / resume custom queues
 * Cancel ongoing or enqueued connections
 
+You may set few global settings like:
+
+* An Application-wide Authentication delegate (since authentication is most likely to be an application wide concern)
+* An application-wide onRequest callback, useful for setting the network activity indicator for example
+* Set whether the class should forbid ongoing duplicate resource request (Example: forbid multiple HTTP GET of the same URL)
+
 ## Usage
 
 ### With no queue context
@@ -19,7 +25,7 @@ Since MCCURLConnection uses NSOperationQueue to control connections flow you may
                              onFinished:^(NSError *error, NSInteger status) { ... }];
 ```
 
-The above example will run the connection callbacks on the main thread.
+The above example will use the [NSOperationQueue mainQueue] and thus, run the connection callbacks on the main thread.
 
 ### With a queue context
 
@@ -49,7 +55,7 @@ Then, submit multiple connections to this queue context:
 etc...
 ```
 
-The connection callbacks will run in a custom thread.
+The connection is enqueued in the queue and callbacks will run in a custom thread.
 
 At any moment you may suspend / resume the queues or cancel a connection:
 
