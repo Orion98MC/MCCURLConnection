@@ -16,7 +16,7 @@ You may set few global settings like:
 
 ## Usage
 
-### With no queue context
+### With default queue context (main queue)
 
 ```objective-c
 [MCCURLConnection connectionWithRequest:[NSURLRequest requestWithURL:myURL]
@@ -27,7 +27,7 @@ You may set few global settings like:
 
 The above example will use the [NSOperationQueue mainQueue] and thus, run the connection callbacks on the main thread.
 
-### With a queue context
+### With a custom queue context
 
 First, let's create a custom queue:
 
