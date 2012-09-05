@@ -74,6 +74,11 @@ Since the interface of MCCURLConnection is nearly as sparse as NSURLConnection, 
 You may subclass MCCURLConnection but I think that the best way to extend it would be to add a category.
 
 
+## Blog post
+
+I made a blog post about this class, you may find it here: http://orion98mc.blogspot.com/2012/09/on-asihttprequest-replacement.html
+
+
 ## License terms
 
 Copyright (c), 2012 Thierry Passeron
