@@ -47,6 +47,15 @@ static void(^globalOnRequest)(BOOL started) = nil;
   Block_copy(globalOnRequest);
 }
 
+static NSOperationQueue *defaultQueue = nil;
++ (void)setQueue:(NSOperationQueue *)queue {
+  if (defaultQueue) {
+    [defaultQueue release];
+  }
+  defaultQueue = queue;
+  [defaultQueue retain];
+}
+
 static id <NSURLConnectionDelegate> _authenticationDelegate = nil;
 + (void)setAuthenticationDelegate:(id<NSURLConnectionDelegate>)authDelegate {
   _authenticationDelegate = authDelegate;
@@ -55,14 +64,27 @@ static id <NSURLConnectionDelegate> _authenticationDelegate = nil;
 
 #pragma mark init/dealloc
 
+static dispatch_queue_t _serialQueue = nil; /* Queue used for inter-thread sync like when canceling a connection */
+/* Warning: Don't submit anything using dispatch_sync to the main thread from this queue because of !REF1! */
+
 - (id)init {
   if (!(self = [super init])) return nil;
+  
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    _serialQueue = dispatch_queue_create("com.serial.MCCURLConnection", NULL); // Critical section serial queue mainly used for cancels
+    if (!defaultQueue) {
+      defaultQueue = [[NSOperationQueue alloc]init];
+      defaultQueue.maxConcurrentOperationCount = 1;
+    }
+    _ongoing = [[NSMutableSet alloc]init]; // Unique resource check
+  });
   
   self.started = FALSE;
   self.finished = FALSE;
   self.canceled = FALSE;
   self.isContext = FALSE;
-  self.queue = [NSOperationQueue mainQueue];
+  self.queue = defaultQueue;
   
 #ifdef DEBUG_MCCURLConnection
   NSLog(@"init: %p", self);
@@ -85,7 +107,7 @@ static id <NSURLConnectionDelegate> _authenticationDelegate = nil;
   __block typeof(self) __self = self;
   self.onResponse = onResponseCallback;
   self.onData = onDataCallback;
-  self.onFinished = ^(NSError *error, NSInteger status){ __self.finished = TRUE; onFinishedCallback(error, status); };
+  self.onFinished = ^(NSError *error, NSInteger status){ __self.finished = TRUE; if (onFinishedCallback) onFinishedCallback(error, status); };
   
   return self;
 }
@@ -149,13 +171,16 @@ static id <NSURLConnectionDelegate> _authenticationDelegate = nil;
   return [c autorelease];
 }
 
+
 - (void)cancel {
-  canceled = TRUE;
-  if (started) {
-    [connection cancel];
-    if (onRequest) onRequest(FALSE);
-    if (globalOnRequest) globalOnRequest(FALSE);
-  }
+  dispatch_async(_serialQueue, ^{
+    if (self.finished || self.canceled) return;
+#ifdef DEBUG_MCCURLConnection
+    NSLog(@"Canceling: %p", self);
+#endif
+    self.canceled = TRUE;
+    if (self.started) [connection cancel];
+  });
 }
 
 
@@ -163,10 +188,6 @@ static id <NSURLConnectionDelegate> _authenticationDelegate = nil;
 
 static NSMutableSet *_ongoing = nil;
 - (BOOL)setOngoingRequest:(NSURLRequest *)aRequest {
-  static dispatch_once_t onceToken;
-  dispatch_once(&onceToken, ^{
-    _ongoing = [[NSMutableSet alloc]init];
-  });
   if ([aRequest HTTPMethod]) {
     NSString *method = [[aRequest HTTPMethod]uppercaseString];
     if ([method isEqualToString:@"GET"]) {
@@ -190,42 +211,59 @@ static NSMutableSet *_ongoing = nil;
 #ifdef DEBUG_MCCURLConnection
     NSLog(@"Starting: %@", __self); // Let's not retain self for the debug log
 #endif
-    if (canceled) return;
-    if (onRequest) onRequest(TRUE);
-    if (globalOnRequest) globalOnRequest(TRUE);
     
-    self.started = TRUE;
+    BOOL isMainThread = [NSThread isMainThread];
+    NSRunLoop *currentRunLoop = [NSRunLoop currentRunLoop];
     
-    if ([NSThread isMainThread]) {
-      self.connection = [NSURLConnection connectionWithRequest:request delegate:self];
-      return;
-    }
+    // Critical section management begin
+    __block BOOL shouldReturn = FALSE;
     
-    self.connection = [[[NSURLConnection alloc]initWithRequest:request delegate:self startImmediately:NO]autorelease];
-    [connection scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
-    [connection start];
+    dispatch_sync(_serialQueue, ^{ /* !REF1! it is a synchronous dispatch, we wait for completion... */
+      if (self.canceled) { shouldReturn = TRUE; return; }
+      self.started = TRUE;
+      
+      /* For the same reason don't use a dispatch_sync(_serialQueue, ...) in these callbacks */
+      if (onRequest) onRequest(TRUE);
+      if (globalOnRequest) globalOnRequest(TRUE);
+      
+      if (isMainThread) {
+        self.connection = [NSURLConnection connectionWithRequest:request delegate:self];
+        return;
+      }
+      
+      self.connection = [[[NSURLConnection alloc]initWithRequest:request delegate:self startImmediately:NO]autorelease];
+      [connection scheduleInRunLoop:currentRunLoop forMode:NSDefaultRunLoopMode];
+      [connection start];
+    });
     
-    while (!(finished || canceled)) {
+    if (shouldReturn) return;
+    // End critical section management
+        
+    while (!(self.finished || self.canceled)) {
 #ifdef DEBUG_MCCURLConnection
       NSLog(@"%p ... ", __self);
 #endif
       [[NSRunLoop currentRunLoop]runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:1.0]];
     }
+    
+    if (onRequest) onRequest(FALSE);
+    if (globalOnRequest) globalOnRequest(FALSE);
+    
   }];
   
 #ifdef DEBUG_MCCURLConnection
-  NSLog(@"Enqueued: %@", self);
+  NSLog(@"Enqueued: %p", self);
 #endif
 }
 
 - (NSString *)description {
   if (isContext) {
-    return [NSString stringWithFormat:@"%@ (%p) queue context: %@ (onRequest:%@)", [self class], self, queue == [NSOperationQueue mainQueue] ? @"Main Queue" : queue, onRequest];
+    return [NSString stringWithFormat:@"%@ (%p) queue context: %@ (onRequest:%@)", [self class], self, queue == defaultQueue ? @"Default Queue" : queue, onRequest];
   }
   
   NSMutableString *desc = [NSMutableString stringWithFormat:@"%@ (%p) connection\n", [self class], self];
                   [desc appendFormat:@"\tStarted:          %@\n", started ? @"YES" : @"NO"];
-                  [desc appendFormat:@"\tQueue:            %@\n", queue == [NSOperationQueue mainQueue] ? @"Main Queue" : queue];
+                  [desc appendFormat:@"\tQueue:            %@\n", queue == defaultQueue ? @"Default Queue" : queue];
   if (connection) [desc appendFormat:@"\tConnection:       %@\n", connection];
   if (canceled)   [desc appendFormat:@"\tCanceled:         %@\n", canceled ? @"YES" : @"NO"];
   if (finished)   [desc appendFormat:@"\tFinished:         %@\n", finished ? @"YES" : @"NO"];
@@ -248,22 +286,30 @@ static NSMutableSet *_ongoing = nil;
     httpStatusCode = [(NSHTTPURLResponse*)response statusCode];
   }
   if (onResponse) onResponse(response);
+#ifdef DEBUG_MCCURLConnection
+  NSLog(@"*** response in %p", self);
+#endif
 }
 
 - (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)chunk {
   if (onData) onData(chunk);
+#ifdef DEBUG_MCCURLConnection
+  NSLog(@"*** chunk in %p", self);
+#endif
 }
 
 - (void)connectionDidFinishLoading:(NSURLConnection *)aConnection {
   if (onFinished) onFinished(nil, httpStatusCode);
-  if (onRequest) onRequest(FALSE);
-  if (globalOnRequest) globalOnRequest(FALSE);
+#ifdef DEBUG_MCCURLConnection
+  NSLog(@"*** did finish %p", self);
+#endif
 }
 
 - (void)connection:(NSURLConnection *)connection didFailWithError:(NSError *)error {
   if (onFinished) onFinished(error, httpStatusCode);
-  if (onRequest) onRequest(FALSE);
-  if (globalOnRequest) globalOnRequest(FALSE);
+#ifdef DEBUG_MCCURLConnection
+  NSLog(@"*** did fail %p", self);
+#endif
 }
 
 

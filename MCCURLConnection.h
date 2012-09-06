@@ -12,7 +12,7 @@
  MCCURLConnection is not meant to be a replacement for any full fledged network request object, but it's meant to be very lightweight and easy to use.
  MCCURLConnection is mainly intended for HTTP requests but can work with all the other protocols handled by NSURLRequest/NSURLConnection.
  
- MCCURLConnection uses NSOperationQueue to control connections flow. You either create a connection with no specific queue (the mainQueue is used) or create a queue context and then create connections in this queue context. Because of the NSOperationQueue usage, you can suspend / restart, cancel and control concurency of requests.
+ MCCURLConnection uses NSOperationQueue to control connections flow. You either create a connection with no specific queue (a default queue is used) or create a queue context and then create connections in this queue context. Because of the NSOperationQueue usage, you can suspend / restart, cancel and control concurency of requests.
  
  MCCURLConnection allows you to specify a global authentication delegate and few other global settings.
  
@@ -24,7 +24,7 @@
  Example usage:
  ==============
  
- * request in the main queue
+ * request in the default queue
  
  [MCCURLConnection connectionWithRequest:[NSURLRequest requestWithURL:myURL]
                               onResponse:^(NSURLResponse *response) { ... }
@@ -67,8 +67,11 @@
 /* globaly set whether ongoing request resources must be unique, default is TRUE */
 + (void)setEnforceUniqueRequestedResource:(BOOL)unique;
 
-/* set a global onRequest callback */
+/* set a default onRequest callback */
 + (void)setOnRequest:(void(^)(BOOL started))callback;
+
+/* set a default queue */
++ (void)setQueue:(NSOperationQueue *)queue;
 
 /* set a global authentication delegate that will be used for all authentications */
 + (void)setAuthenticationDelegate:(id)aDelegate;
@@ -77,7 +80,7 @@
 
 #pragma mark Connections
 
-/* Return an autoreleased connection in the main queue or nil if duplicate resource request and enforced policy */
+/* Return an autoreleased connection in the default queue or nil if duplicate resource request and enforced policy */
 + (id)connectionWithRequest:(NSURLRequest *)request
                  onResponse:(void(^)(NSURLResponse *response))onResponse /* can be nil */
                      onData:(void(^)(NSData *chunk))onData /* can be nil */
