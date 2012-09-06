@@ -13,6 +13,7 @@ You may set few global settings like:
 * An Application-wide Authentication delegate (since authentication is most likely to be an application-wide concern)
 * An application-wide onRequest callback, useful for setting the network activity indicator for example
 * Set whether the class should forbid ongoing duplicate resource request (Example: forbid multiple enqueued HTTP GET of the same URL)
+* A default queue for connections created out of a context
 
 ## Usage
 
