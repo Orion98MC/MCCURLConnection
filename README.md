@@ -23,7 +23,7 @@ You may set few global settings like:
 [MCCURLConnection connectionWithRequest:[NSURLRequest requestWithURL:myURL]
                              onResponse:^(MCCURLConnection *connection, NSURLResponse *response) { ... }
                                  onData:^(MCCURLConnection *connection, NSData *chunk) { ... }
-                             onFinished:^(MCCURLConnection *connection, NSError *error, NSInteger status) { ... }];
+                             onFinished:^(MCCURLConnection *connection) { ... }];
 ```
 
 The above example will use the default queue and run callback blocks in a thread.
