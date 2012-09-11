@@ -1,6 +1,5 @@
 //
 //  MCCURLConnection.h
-//  MCCHTTPDownloaderDemo
 //
 //  Created by Thierry Passeron on 02/09/12.
 //  Copyright (c) 2012 Monte-Carlo Computing. All rights reserved.
@@ -27,9 +26,9 @@
  * request in the default queue
  
  [MCCURLConnection connectionWithRequest:[NSURLRequest requestWithURL:myURL]
-                              onResponse:^(NSURLResponse *response) { ... }
-                                  onData:^(NSData *chunk) { ... }
-                              onFinished:^(NSError *error, NSInteger status) { ... }];
+                              onResponse:^(MCCURLConnection *connection, NSURLResponse *response) { ... }
+                                  onData:^(MCCURLConnection *connection, NSData *chunk) { ... }
+                              onFinished:^(MCCURLConnection *connection) { ... }];
  
  * requests in a custom queue context
  
@@ -39,27 +38,34 @@
  MCCURLConnection *context = [MCCURLConnection contextWithQueue:queue onRequest:nil];
  
  [context connectionWithRequest:[NSURLRequest requestWithURL:myURL1]
-                     onResponse:^(NSURLResponse *response) { ... }
-                         onData:^(NSData *chunk) { ... }
-                     onFinished:^(NSError *error, NSInteger status) { ... }];
+                     onResponse:^(MCCURLConnection *connection, NSURLResponse *response) { ... }
+                         onData:^(MCCURLConnection *connection, NSData *chunk) { ... }
+                     onFinished:^(MCCURLConnection *connection) { ... }];
  
  MCCURLConnection *connection2 =
  [context connectionWithRequest:[NSURLRequest requestWithURL:myURL2]
-                     onResponse:^(NSURLResponse *response) { ... }
-                         onData:^(NSData *chunk) { ... }
-                     onFinished:^(NSError *error, NSInteger status) { ... }];
+                     onResponse:^(MCCURLConnection *connection, NSURLResponse *response) { ... }
+                         onData:^(MCCURLConnection *connection, NSData *chunk) { ... }
+                     onFinished:^(MCCURLConnection *connection) { ... }];
  
  ...
  
  [connection2 cancel]; // Cancel a connection
  
- REM: the queue is retained by the connection until the connection is finished or canceled
+ REM: the queue is retained by the connection until the connection is finished or cancelled
  
 */
 
 #import <Foundation/Foundation.h>
 
 @interface MCCURLConnection : NSObject
+
+@property (retain, nonatomic) id userInfo; // You may set any objective-c object as userInfo
+
+- (NSURLResponse *)response;  // Automatically set when a response is received
+- (NSMutableData *)data;      // Set when no onData callback is specified
+- (NSError *)error;           // Automatically set when the connection is finished with an error
+- (NSInteger)httpStatusCode;  // Automatically set when a HTTP response is received
 
 
 #pragma mark Global settings
@@ -77,23 +83,26 @@
 + (void)setAuthenticationDelegate:(id)aDelegate;
 
 
-
 #pragma mark Connections
 
 /* Return an autoreleased connection in the default queue or nil if duplicate resource request and enforced policy */
 + (id)connectionWithRequest:(NSURLRequest *)request
-                 onResponse:(void(^)(NSURLResponse *response))onResponse /* can be nil */
-                     onData:(void(^)(NSData *chunk))onData /* can be nil */
-                 onFinished:(void(^)(NSError *error, NSInteger status))onFinished /* can be nil */;
+                 onResponse:(void(^)(MCCURLConnection *, NSURLResponse *response))onResponseCallback
+                     onData:(void(^)(MCCURLConnection *, NSData *data))onDataCallback
+                 onFinished:(void(^)(MCCURLConnection *))onFinishedCallback;
+/* Shortcut, data will be automatically saved */
++ (id)connectionWithRequest:(NSURLRequest *)request finished:(void(^)(MCCURLConnection *))onFinishedCallback;
 
 /* Return an autoreleased custom queue context */
 + (id)contextWithQueue:(NSOperationQueue *)queue onRequest:(void(^)(BOOL started))callback /* can be nil */;
 
 /* Return an autoreleased connection in a custom queue context or nil if duplicate resource request and enforced policy */
 - (id)connectionWithRequest:(NSURLRequest *)request
-                 onResponse:(void(^)(NSURLResponse *response))onResponse /* can be nil */
-                     onData:(void(^)(NSData *chunk))onData /* can be nil */
-                 onFinished:(void(^)(NSError *error, NSInteger status))onFinished /* can be nil */;
+                 onResponse:(void(^)(MCCURLConnection *, NSURLResponse *response))onResponseCallback
+                     onData:(void(^)(MCCURLConnection *, NSData *data))onDataCallback
+                 onFinished:(void(^)(MCCURLConnection *))onFinishedCallback;
+/* Shortcut, data will be automatically saved */
+- (id)connectionWithRequest:(NSURLRequest *)request finished:(void(^)(MCCURLConnection *))onFinishedCallback;
 
 /* cancel the connection */
 - (void)cancel;
