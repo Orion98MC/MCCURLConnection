@@ -21,9 +21,9 @@ You may set few global settings like:
 
 ```objective-c
 [MCCURLConnection connectionWithRequest:[NSURLRequest requestWithURL:myURL]
-                             onResponse:^(NSURLResponse *response) { ... }
-                                 onData:^(NSData *chunk) { ... }
-                             onFinished:^(NSError *error, NSInteger status) { ... }];
+                             onResponse:^(MCCURLConnection *connection, NSURLResponse *response) { ... }
+                                 onData:^(MCCURLConnection *connection, NSData *chunk) { ... }
+                             onFinished:^(MCCURLConnection *connection, NSError *error, NSInteger status) { ... }];
 ```
 
 The above example will use the default queue and run callback blocks in a thread.
