@@ -304,9 +304,7 @@ static NSMutableSet *_ongoing = nil;
   }
 
   self.response = aResponse;
-  if (!onData) {
-    self.data = [NSMutableData data];
-  }
+  self.data = [NSMutableData data];
 
   if (onResponse) onResponse(self, response);
 #ifdef DEBUG_MCCURLConnection
