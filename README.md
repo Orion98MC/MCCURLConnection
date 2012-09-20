@@ -12,7 +12,7 @@ You may set few global settings like:
 
 * An Application-wide Authentication delegate (since authentication is most likely to be an application-wide concern)
 * An application-wide onRequest callback, useful for setting the network activity indicator for example
-* Set whether the class should forbid ongoing duplicate resource request (Example: forbid multiple enqueued HTTP GET of the same URL)
+* Set whether the class should forbid ongoing duplicate resource requests (Example: forbid multiple enqueued HTTP GET of the same URL)
 * A default queue for connections created out of a context
 
 ## Usage
@@ -20,13 +20,17 @@ You may set few global settings like:
 ### With default queue context 
 
 ```objective-c
-[MCCURLConnection connectionWithRequest:[NSURLRequest requestWithURL:myURL]
-                             onResponse:^(MCCURLConnection *connection, NSURLResponse *response) { ... }
-                                 onData:^(MCCURLConnection *connection, NSData *chunk) { ... }
-                             onFinished:^(MCCURLConnection *connection) { ... }];
+[[MCCURLConnection connectionWithRequest:request onFinished:^(MCCURLConnection *connection) { ... }];
+
+or
+
+MCCURLConnection *connection = [MCCURLConnection connection];
+connection.onFinished = ^(MCCURLConnection *connection) { ... };
+[connection enqueueWithRequest:request];
+
 ```
 
-The above example will use the default queue and run callback blocks in a thread.
+The above example will use the default queue and run callback blocks in a custom thread. The default queue has maxConcurrentOperationCount set to 1.
 
 ### With a custom queue context
 
@@ -48,10 +52,13 @@ Now, create the queue context:
 Then, submit multiple connections to this queue context:
 
 ```objective-c
-[context connectionWithRequest:[NSURLRequest requestWithURL:myURL1]
-                    onResponse:^(MCCURLConnection *connection, NSURLResponse *response) { ... }
-                        onData:^(MCCURLConnection *connection, NSData *chunk) { ... }
-                    onFinished:^(MCCURLConnection *connection) { ... }];
+[context connectionWithRequest:request onFinished:^(MCCURLConnection *connection) { ... }];
+
+or
+
+MCCURLConnection *connection = [MCCURLConnection connection];
+connection.onFinished = ^(MCCURLConnection *connection) { ... };
+[connection enqueueWithRequest:request];
 
 etc...
 ```
@@ -61,8 +68,8 @@ The connection is enqueued in the context queue and callbacks will run in a cust
 At any moment you may suspend / resume the queues or cancel a connection (even from within a callback):
 
 ```objective-c
-MCCURLConnection *connection = [MCCURLConnection connectionWithRequest:[NSURLRequest requestWithURL:myURL1] onResponse:nil onData:nil onFinished:nil];
-
+MCCURLConnection *connection = [MCCURLConnection connection];
+[connection enqueueWithRequest:request];
 ...
 
 [connection cancel];
