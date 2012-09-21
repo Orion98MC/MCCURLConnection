@@ -86,6 +86,8 @@ You may subclass MCCURLConnection but I think that the best way to extend it wou
 
 I made a blog post about this class, you may find it here: http://orion98mc.blogspot.com/2012/09/on-asihttprequest-replacement.html
 
+(NEW!) And there is also a hands on lab here: http://orion98mc.blogspot.com/2012/09/seamless-downloads-with-mccurlconnection.html
+
 
 ## License terms
 
