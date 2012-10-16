@@ -113,6 +113,8 @@
 /* Return an autoreleased custom queue context */
 + (id)contextWithQueue:(NSOperationQueue *)queue onRequest:(void(^)(BOOL started))callback /* can be nil */;
 
+@property (assign, nonatomic) BOOL enforcesUniqueRequestedResource;
+
 /* Return an autoreleased connection bound to a custom queue context. ie. you must set a context first */
 - (id)connection;
 
@@ -124,5 +126,6 @@
 
 /* cancel the connection */
 - (void)cancel;
+- (void)blockedCancel;
 
 @end

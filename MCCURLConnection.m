@@ -37,11 +37,13 @@
 @property (retain, nonatomic) NSError *error;
 @property (assign, nonatomic) NSInteger httpStatusCode;
 
+@property (assign, nonatomic) BOOL enforcesUniqueRequestedResourceFromContext;
+@property (assign, nonatomic) BOOL contextual;
 @end
 
 @implementation MCCURLConnection
 @synthesize connection, onRequest, onResponse, onData, onFinished, httpStatusCode, queue, finished, cancelled, identifier, started, isContext, response, data, error, onWillCacheResponse;
-@synthesize userInfo;
+@synthesize userInfo, enforcesUniqueRequestedResource, enforcesUniqueRequestedResourceFromContext, contextual;
 
 
 #pragma mark global settings
@@ -99,6 +101,7 @@ static dispatch_queue_t _serialQueue = nil; /* Queue used for inter-thread sync 
   self.cancelled = FALSE;
   self.isContext = FALSE;
   self.queue = defaultQueue;
+  self.contextual = FALSE;
   
 #ifdef DEBUG_MCCURLConnection
   NSLog(@"init: %p", self);
@@ -123,6 +126,7 @@ static dispatch_queue_t _serialQueue = nil; /* Queue used for inter-thread sync 
   self.onResponse = nil;
   self.onData = nil;
   self.onFinished = nil;
+  self.onWillCacheResponse = nil;
   [super dealloc];
 }
 
@@ -147,8 +151,14 @@ static dispatch_queue_t _serialQueue = nil; /* Queue used for inter-thread sync 
   c.queue = queue;
   c.onRequest = callback;
   c.isContext = TRUE;
+  c.enforcesUniqueRequestedResource = YES; /* Default to enforce policy */
   
   return [c autorelease];
+}
+
+- (void)setEnforcesUniqueRequestedResource:(BOOL)does {
+  NSAssert(self.isContext, @"Only on a context");
+  enforcesUniqueRequestedResource = does;
 }
 
 - (id)connection {
@@ -159,6 +169,8 @@ static dispatch_queue_t _serialQueue = nil; /* Queue used for inter-thread sync 
   // Inherit context
   c.queue = queue;
   if (onRequest) c.onRequest = onRequest;
+  c.enforcesUniqueRequestedResourceFromContext = enforcesUniqueRequestedResource;
+  c.contextual = TRUE;
   
   return [c autorelease];
 }
@@ -185,12 +197,26 @@ static dispatch_queue_t _serialQueue = nil; /* Queue used for inter-thread sync 
   });
 }
 
+- (void)blockedCancel { /* this cancelling blocks the caller until the cancel is effective */
+  dispatch_sync(_serialQueue, ^{
+#ifdef DEBUG_MCCURLConnection
+    NSLog(@"blocked Cancelling: %p", self);
+#endif
+    self.cancelled = TRUE;
+    [self removeFromOngoingRequests];
+    if (self.started && !self.finished) [connection cancel];
+  });
+}
 
 
 #pragma mark tool methods
 
 static NSMutableSet *_ongoing = nil;
 - (BOOL)setOngoingRequest:(NSURLRequest *)aRequest {
+  if ((contextual && !enforcesUniqueRequestedResourceFromContext) || !_unique) {
+    return YES;
+  }
+  
   if ([aRequest HTTPMethod]) {
     NSString *method = [[aRequest HTTPMethod]uppercaseString];
     if ([method isEqualToString:@"GET"]) {
@@ -201,9 +227,10 @@ static NSMutableSet *_ongoing = nil;
   }
   
   if ([_ongoing containsObject:identifier]) {
-#ifdef DEBUG_MCCURLConnection
+//#ifdef DEBUG_MCCURLConnection
     NSLog(@"Duplicate request: %p (%@)", self, identifier);
-#endif
+//#endif
+    
     
     return FALSE;
   }
@@ -212,7 +239,7 @@ static NSMutableSet *_ongoing = nil;
 }
 
 - (void)removeFromOngoingRequests {
-  if (_unique && _ongoing && identifier) [_ongoing removeObject:identifier];
+  if ((_unique || (contextual && enforcesUniqueRequestedResourceFromContext)) && _ongoing && identifier) [_ongoing removeObject:identifier];
 }
 
 - (void)enqueueWithRequest:(NSURLRequest *)request {
@@ -230,7 +257,7 @@ static NSMutableSet *_ongoing = nil;
     __block BOOL shouldReturn = FALSE;
     
     dispatch_sync(_serialQueue, ^{ /* !REF1! it is a synchronous dispatch, we wait for completion... */
-      if (self.cancelled || (_unique && ![self setOngoingRequest:request])) { shouldReturn = TRUE; return; }
+      if (self.cancelled || ![self setOngoingRequest:request]) { shouldReturn = TRUE; return; }
       
       /* For the same reason don't use a dispatch_sync(_serialQueue, ...) in these callbacks */
       if (onRequest) onRequest(TRUE);
