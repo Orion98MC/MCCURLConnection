@@ -231,7 +231,6 @@ static NSMutableSet *_ongoing = nil;
     NSLog(@"Duplicate request: %p (%@)", self, identifier);
 //#endif
     
-    
     return FALSE;
   }
   [_ongoing addObject:identifier];
