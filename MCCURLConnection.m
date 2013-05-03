@@ -5,6 +5,8 @@
 //  Copyright (c) 2012 Monte-Carlo Computing. All rights reserved.
 //
 
+#import "MCCURLConnection.h"
+
 #define DEBUG_MCCURLConnection
 
 #ifdef DEBUG_MCCURLConnection
@@ -18,7 +20,7 @@
 @end
 #endif
 
-#import "MCCURLConnection.h"
+
 
 @interface MCCURLConnection () <NSURLConnectionDelegate, NSURLConnectionDataDelegate>
 
