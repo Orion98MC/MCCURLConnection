@@ -5,68 +5,33 @@
 //  Copyright (c) 2012 Monte-Carlo Computing. All rights reserved.
 //
 
-/*
- 
- MCCURLConnection is a kind of NSURLConnection with callback blocks instead of delegate.
- MCCURLConnection is meant to be very lightweight and easy to use
- MCCURLConnection is not meant to be a replacement for any full fledged network request object
- MCCURLConnection is mainly intended for HTTP requests but can work with all the other protocols handled by NSURLRequest/NSURLConnection.
- 
- MCCURLConnection uses NSOperationQueue to control connections flow. You either create a connection with no specific queue (a default queue is used) or create a queue context and then create connections in this queue context. Because of the NSOperationQueue usage, you can suspend / restart, cancel and control concurency of requests.
- 
- MCCURLConnection allows you to specify a global authentication delegate and few other global settings.
- 
- You may wish to add categories to add missing delegate methods.
- 
- REM: Don't alloc/init objects of this class, use the provided constructors
- 
- 
- Example usage:
- ==============
- 
- * run a request in the default queue context
-
-  NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:@"http://www.google.com"]];
- 
-  [[MCCURLConnection connectionWithRequest:request onFinished:^(MCCURLConnection *connection) {
-    if (!connection.error) {
-      NSLog(@"HTTP Headers: %@", [((NSHTTPURLResponse*)connection.response) allHeaderFields]);
-      NSLog(@"Status: %d", connection.httpStatusCode);
-      NSLog(@"Received data length: %d", connection.data.length);
-    }
-  }];
- 
- 
- * in a custom queue context
- 
-   NSOperationQueue *queue = [[[NSOperationQueue alloc] init]autorelease];
-   queue.maxConcurrentOperationCount = 2;
-   
-   MCCURLConnection *context = [MCCURLConnection contextWithQueue:queue onRequest:nil];
-   
-   [context connectionWithRequest:request1 onFinished:^(MCCURLConnection *connection) {
-     if (!connection.error) {
-       NSLog(@"HTTP Headers: %@", [((NSHTTPURLResponse*)connection.response) allHeaderFields]);
-       NSLog(@"Status: %d", connection.httpStatusCode);
-       NSLog(@"Received data length: %d", connection.data.length);
-     }
-   }];
-   
-   MCCURLConnection *connection2 = [context connection];
-   connection.onResponse = ^(NSURLResponse *response) {
-     NSLog(@"Got response: %@", response);
-   };
-   [connection2 enqueueWithRequest:request2];
-   
-   ...
-   
-   [connection2 cancel]; // Cancel a connection
- 
- REM: the queue is retained by the connection until the connection is finished or cancelled
- 
-*/
-
 #import <Foundation/Foundation.h>
+
+typedef enum {
+  ConnectionStateNone = 0,
+  ConnectionStateEnqueued = 1,
+  ConnectionStateStarted = 10,
+  ConnectionStateFinished = 20
+} MCCURLConnectionState;
+
+typedef enum {
+  FinishedStateNone = 0,
+  FinishedStateInvalid,
+  FinishedStateCancelled,
+  FinishedStateError,
+  FinishedStateOK = 10
+} MCCURLConnectionFinishedState;
+
+@class MCCURLConnection;
+@protocol MCCURLConnectionContextProtocol <NSObject>
+@property (retain, nonatomic) NSOperationQueue *queue;
+@property (assign, nonatomic) BOOL enforcesUniqueRequestedResource;
+@property (copy, nonatomic) void(^onRequest)(MCCURLConnection *);
+@property (assign, nonatomic) id authenticationDelegate;
+- (id)connection;
+- (void)enqueueRequest:(NSURLRequest *)request;
+- (id)connectionWithRequest:(NSURLRequest *)request onFinished:(void(^)(MCCURLConnection *))onFinishedCallback;
+@end
 
 @interface MCCURLConnection : NSObject
 
@@ -76,23 +41,28 @@
 @property (copy, nonatomic) NSCachedURLResponse *(^onWillCacheResponse)(NSCachedURLResponse *);
 
 @property (retain, nonatomic) id userInfo; // You may set any objective-c object as userInfo
+@property (retain, nonatomic) NSString *identifier; // Use this to provide a custom identifier for unique request enforcement. The default identifier is @"<HTTP_METHOD> <URL>"
 
 - (NSURLResponse *)response;  // Automatically set when a response is received
-- (NSMutableData *)data;      // Automatically filled when no onData callback is specified
+- (NSMutableData *)data;      // Automatically filled _ONLY_ when NO onData callback is specified
 - (NSError *)error;           // Automatically set when the connection is finished with an error
 - (NSInteger)httpStatusCode;  // Automatically set when a HTTP response is received
-- (BOOL)isFinished;
-- (BOOL)isCancelled;
+
+- (MCCURLConnectionState)state;
+- (MCCURLConnectionFinishedState)finishedState;
+
+/* cancel the connection */
+- (void)cancel;
 
 
 
-#pragma mark Global settings
+#pragma mark Global context
 
 /* globaly set whether ongoing requested resources must be unique, default is TRUE */
-+ (void)setEnforceUniqueRequestedResource:(BOOL)unique;
++ (void)setEnforcesUniqueRequestedResource:(BOOL)unique;
 
 /* set a default onRequest callback */
-+ (void)setOnRequest:(void(^)(BOOL started))callback;
++ (void)setOnRequest:(void(^)(MCCURLConnection *))callback;
 
 /* set a default queue */
 + (void)setQueue:(NSOperationQueue *)queue;
@@ -102,30 +72,33 @@
 
 
 
-#pragma mark Connections
-
-/* Return an autoreleased connection bound to the default queue */
+/* Return an autoreleased connection bound to the global context */
 + (id)connection;
 
-/* Return an enqueued connection in the default queue */
+// Convenient shortcut method
+/* Return an enqueued connection in the global context */
 + (id)connectionWithRequest:(NSURLRequest *)request onFinished:(void(^)(MCCURLConnection *connection))onFinishedCallback;
 
-/* Return an autoreleased custom queue context */
-+ (id)contextWithQueue:(NSOperationQueue *)queue onRequest:(void(^)(BOOL started))callback /* can be nil */;
 
+
+#pragma mark Custom context
+
+/* Return an autoreleased custom context */
++ (id)context;
+
+@property (retain, nonatomic) NSOperationQueue *queue;
 @property (assign, nonatomic) BOOL enforcesUniqueRequestedResource;
+@property (copy, nonatomic) void(^onRequest)(MCCURLConnection *);
+@property (assign, nonatomic) id authenticationDelegate;
 
-/* Return an autoreleased connection bound to a custom queue context. ie. you must set a context first */
+
+/* Return an autoreleased connection bound to the custom context.  */
 - (id)connection;
 
-/* Return an enqueued connection in a custom queue context */
+/* enqueue the connection operation in it's target queue to start the given request */
+- (void)enqueueRequest:(NSURLRequest *)request;
+
+/* Return an enqueued connection for the context */
 - (id)connectionWithRequest:(NSURLRequest *)request onFinished:(void(^)(MCCURLConnection *))onFinishedCallback;
-
-/* enqueue the connection object in it's target queue to start the given request */
-- (void)enqueueWithRequest:(NSURLRequest *)request;
-
-/* cancel the connection */
-- (void)cancel;
-- (void)blockedCancel;
 
 @end

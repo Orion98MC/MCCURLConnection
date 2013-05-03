@@ -1,93 +1,150 @@
 ## Description
 
-MCCURLConnection is a Very Lightweight Queued NSURLConnection with Callback Blocks.
+MCCURLConnection is a Very Lightweight Queued NSURLConnection
 
-Since MCCURLConnection uses NSOperationQueue to control connections flow, you may:
+Features:
 
-* Control connections' concurrency
-* Suspend / resume custom queues
-* Cancel ongoing or enqueued connections
+* Only _ONE_ class to import! 600 lines long.
+* Asynchronous downloads
+* Use blocks as delegate methods
+* Callbacks are run out of the main thread
+* Control concurrency with Operation queues
+* Cancel connections
+* Manage application wide or context wide behaviors.
+* and many more...
 
-You may set few global settings like:
 
-* An Application-wide Authentication delegate (since authentication is most likely to be an application-wide concern)
-* An application-wide onRequest callback, useful for setting the network activity indicator for example
-* Set whether the class should forbid ongoing duplicate resource requests (Example: forbid multiple enqueued HTTP GET of the same URL)
-* A default queue for connections created out of a context
+## Basic usage
 
-## Usage
+### With "global" queue context 
 
-### With default queue context 
+Class methods are used to provide a default "global" context.
 
 ```objective-c
 [[MCCURLConnection connectionWithRequest:request onFinished:^(MCCURLConnection *connection) { ... }];
-
-or
-
-MCCURLConnection *connection = [MCCURLConnection connection];
-connection.onFinished = ^(MCCURLConnection *connection) { ... };
-[connection enqueueWithRequest:request];
-
 ```
 
-The above example will use the default queue and run callback blocks in a custom thread. The default queue has maxConcurrentOperationCount set to 1.
 
 ### With a custom queue context
 
-First, let's create a custom queue:
+Instance methods are used to provide a custom context. 
 
 ```objective-c
-NSOperationQueue *queue = [[[NSOperationQueue alloc] init]autorelease];
-queue.maxConcurrentOperationCount = 2;
-```
-
-This queue allows 2 concurrent operations.
-
-Now, create the queue context:
-
-```objective-c
- MCCURLConnection *context = [MCCURLConnection contextWithQueue:queue onRequest:nil];
+ MCCURLConnection *context = [MCCURLConnection context];
+ context.queue = myQueue; // myQueue is a NSOperationQueue object
 ```
 
 Then, submit multiple connections to this queue context:
 
 ```objective-c
-[context connectionWithRequest:request onFinished:^(MCCURLConnection *connection) { ... }];
-
-or
-
-MCCURLConnection *connection = [MCCURLConnection connection];
-connection.onFinished = ^(MCCURLConnection *connection) { ... };
-[connection enqueueWithRequest:request];
-
-etc...
+[context connectionWithRequest:request1 onFinished:^(MCCURLConnection *connection) { ... }];
+...
+[context connectionWithRequest:request2 onFinished:^(MCCURLConnection *connection) { ... }];
 ```
 
-The connection is enqueued in the context queue and callbacks will run in a custom thread.
+### Connections
 
-At any moment you may suspend / resume the queues or cancel a connection (even from within a callback):
+There are two ways to create a connection. They both deliver an autoreleased connection object.
+
+#### using "connection"
 
 ```objective-c
-MCCURLConnection *connection = [MCCURLConnection connection];
-[connection enqueueWithRequest:request];
+MCCURLConnection *connection1 = [MCCURLConnection connection]; 
+
 ...
 
-[connection cancel];
+// When you are ready to start the connection, you must enqueue it's request:
+[connection1 enqueueRequest:MyRequest1];
 ```
 
-## Extending
+#### using "connectionWithRequest:onFinished:"
 
-Since the interface of MCCURLConnection is nearly as sparse as NSURLConnection, you may find useful to extend it with custom constructor or add delegate methods. 
+```objective-c
+MCCURLConnection *connection2 = [MCCURLConnection connectionWithRequest:MyRequest2 onFinished:^(MCCURLConnection *connection) { ... }];
+```
 
-You may subclass MCCURLConnection but I think that the best way to extend it would be to add a category.
+However, this method enqueues the request automatically. 
 
 
-## Blog post
+####  callbacks
+You may register these callbacks on the connection object (see MCCURLConnection.h):
 
-I made a blog post about this class, you may find it here: http://orion98mc.blogspot.com/2012/09/on-asihttprequest-replacement.html
+* onResponse
+* onData
+* onFinished
+* onWillCacheResponse
 
-(NEW!) And there is also a hands on lab here: http://orion98mc.blogspot.com/2012/09/seamless-downloads-with-mccurlconnection.html
+example:
+```objective-c
+MCCURLConnection *connection2 = [MCCURLConnection connectionWithRequest:MyRequest2 onFinished:^(MCCURLConnection *connection) { ... }];
+connection2.onData = ^(NSData *chunk) {
+  ...
+};
+```
 
+#### States
+
+Each connection has a defined state which can be accessed from the _state_ ivar.
+Moreover, when a connection is finished, you can access the _finishedState_ ivar which tells you how it finished, whether it has been cancelled, or encountered an error etc... (see MCCURLConnection.h)
+
+Also, each connection maintains these accessors: 
+
+* httpStatusCode (filled in response to a HTTP request)
+* error (filled when an error occured, like no network, timeouts etc...)
+* data (only filled when no onData callback is registered)
+* response (filled when a response is received from the server)
+
+#### Other
+
+You may attach any objective-c object to the connection using the _userInfo_ ivar. It will be retained and released when the connection is deallocated.
+
+### Context
+
+Each context whether global (Class) or custom (instance) conforms to the MCCURLConnectionContextProtocol (see MCCURLConnection.h) in which you can configure:
+
+* the operation queue
+* the unique request policy enforcement
+* the onRequest callback
+* the authentication delegate
+
+
+#### onRequest
+
+This callback is run when a connection has just started or finished (state == ConnectionStateStarted || state == ConnectionStateFinished)
+Note that when this callback is set on the global context (Class) it will always be triggered, even from connections bound to a custom context. 
+
+It can be useful to register it in the global context to manage the network activity indicator view application-wide:
+
+```objective-c
+[MCCURLConnection setOnRequest:^(MCCURLConnection *connection) { 
+  static int live = 0;
+  
+  if (connection.state == ConnectionStateFinished) live--;
+  else live++;
+  
+  [application setNetworkActivityIndicatorVisible:!!live];
+}];
+```
+
+
+#### Unique requests policy enforcement
+
+By default, each HTTP request must be unique. This policy can be changed by setting the _enforcesUniqueRequestedResource_ ivar to FALSE in which case many duplicate requests can be run. 
+
+When the policy is enforced, to determine if a request is a duplicate, we concatenate the requested method and the requested URL. This identifier which should be unique is stored in the _identifier_ ivar.
+
+However, if you set the identifier ivar of the connection, prior to the start of the operation (in the operation queue) you can control the uniqueness checking.
+
+
+## Test
+I have included a sort of test (main.m) and a sort of nodejs server. 
+To run the tests, you need to run the server:
+
+```
+$ node server.js
+```
+
+And then compile and run the main.m
 
 ## License terms
 
