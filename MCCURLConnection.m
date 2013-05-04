@@ -9,6 +9,7 @@
 
 #define DEBUG_MCCURLConnection
 
+#pragma mark debugging material
 #ifdef DEBUG_MCCURLConnection
 @interface NSURLCache (MCCURLConnectionAddons)
 @end
@@ -18,7 +19,89 @@
           (float)self.currentDiskUsage / 1000000.0f, (float)self.diskCapacity / 1000000.0f, (float)self.currentMemoryUsage / 1000000.0f, (float)self.memoryCapacity / 1000000.0f];
 }
 @end
+
+@interface WatchDog : NSObject
+@property (retain, nonatomic) NSTimer *timer;
+@property (retain, nonatomic) NSMutableArray *objects;
+@property (assign, nonatomic) NSInteger totalWatch;
+@property (assign, nonatomic) NSInteger totalUnwatch;
++ (id)watchDogWithTimeInterval:(NSTimeInterval)interval;
+- (void)watchObject:(id)obj usingBlock:(void(^)(id))block;
+- (void)unwatchObject:(id)obj;
+@end
+
+@implementation WatchDog
+
+static dispatch_queue_t __sync = nil;
++ (void)initialize {
+  __sync = dispatch_queue_create("com.mcc.watchdog", 0);
+}
+
++ (id)watchDogWithTimeInterval:(NSTimeInterval)interval {
+  WatchDog *dog = [[[self alloc]init]autorelease];
+  if (!dog) return nil;
+  dog.timer = [NSTimer scheduledTimerWithTimeInterval:interval target:dog selector:@selector(watch:) userInfo:nil repeats:YES];
+  return dog;
+}
+
+- (id)init {
+  self = [super init];
+  if (!self) return nil;
+  
+  self.objects = [NSMutableArray array];
+  self.totalWatch = 0;
+  self.totalUnwatch = 0;
+  
+  return self;
+}
+
+- (void)dealloc {
+  [self.timer invalidate];
+  self.timer = nil;
+  self.objects = nil;
+  [super dealloc];
+}
+
+- (void)watch:(id)sender {
+  dispatch_async(__sync, ^{
+    NSLog(@"* WatchDog %p\n\tTotals (w/u): %d/%d\n\tWatching: %d\n", self, self.totalWatch, self.totalUnwatch, self.objects.count);
+    [self.objects enumerateObjectsUsingBlock:^(id objAndBlock, NSUInteger idx, BOOL *stop) {
+      id obj = [[((NSValue*)objAndBlock[0])nonretainedObjectValue]retain];
+      void(^block)(id) = objAndBlock[1];
+      block(obj);
+      [obj release];
+    }];
+  });
+}
+
+- (void)unwatchObject:(id)anObj {
+  NSLog(@"* WatchDog %p stop watching %p", self, anObj);
+  __block id tobeRemoved = nil;
+  dispatch_sync(__sync, ^{
+    self.totalUnwatch++;
+    [self.objects enumerateObjectsUsingBlock:^(id objAndBlock, NSUInteger idx, BOOL *stop) {
+      if (anObj == [((NSValue*)objAndBlock[0])nonretainedObjectValue]) {
+        tobeRemoved = objAndBlock;
+        *stop = TRUE;
+      }
+    }];
+    if (tobeRemoved) [self.objects removeObject:tobeRemoved];
+  });
+}
+
+- (void)watchObject:(id)obj usingBlock:(void (^)(id))block {
+  NSLog(@"* WatchDog %p start watching %p", self, obj);
+  dispatch_sync(__sync, ^{
+    self.totalWatch++;
+    [self.objects addObject:@[[NSValue valueWithNonretainedObject:obj], block]];
+  });
+}
+
+@end
 #endif
+
+
+
 
 
 
@@ -37,7 +120,8 @@
 @property (assign, nonatomic) MCCURLConnectionState state;
 @property (assign, nonatomic) MCCURLConnectionFinishedState finishedState;
 
-@property (retain, nonatomic) id<MCCURLConnectionContextProtocol> context;
+@property (assign, nonatomic) id<MCCURLConnectionContextProtocol> context; // Weak reference to the context. You must retain the context.
+@property (retain, nonatomic) NSMutableArray *connections;
 
 @end
 
@@ -51,6 +135,7 @@
 @synthesize authenticationDelegate = _authenticationDelegate;
 @synthesize state = _state;
 @synthesize finishedState = _finishedState;
+@synthesize connections= _connections;
 
 
 #pragma mark init/dealloc
@@ -58,55 +143,72 @@
 static dispatch_queue_t __synchronized = nil; /* Queue used for inter-thread sync like when cancelling a connection */
 static NSMutableDictionary *__ongoings = nil;
 
+
+#ifdef DEBUG_MCCURLConnection
 static long long __initedCount = 0;
+static WatchDog *__watchdog = nil;
+#endif
+
++ (void)initialize {
+  __synchronized = dispatch_queue_create("com.mcc.connections", NULL);
+  
+  __queue = [[NSOperationQueue alloc]init];
+  __queue.maxConcurrentOperationCount = 1;
+  
+  __ongoings = [[NSMutableDictionary alloc]init];
+  __connections = [[NSMutableArray alloc]init];
+  
+  #ifdef DEBUG_MCCURLConnection
+  __watchdog = [[WatchDog watchDogWithTimeInterval:10 /* seconds */]retain];
+  #endif
+}
 
 - (id)init {
   self = [super init];
   if (!self) return nil;
   
-  static dispatch_once_t onceToken;
-  dispatch_once(&onceToken, ^{
-    __synchronized = dispatch_queue_create("com.serial.MCCURLConnection", NULL);
-    if (!__queue) {
-      __queue = [[NSOperationQueue alloc]init];
-      __queue.maxConcurrentOperationCount = 1;
-    }
-    __ongoings = [[NSMutableDictionary alloc]init];
-    #ifdef DEBUG_MCCURLConnection
-    __livings = [[NSMutableArray alloc]init];
-    #endif
-  });
-
   _state = ConnectionStateNone;
   _finishedState = FinishedStateNone;
   _shouldCancel = FALSE;
   
   _isContext = FALSE;
-  _queue = [__queue retain];
   _context = (id<MCCURLConnectionContextProtocol>)self.class;
   
   __initedCount++;
   
-#ifdef DEBUG_MCCURLConnection
+  #ifdef DEBUG_MCCURLConnection
   NSLog(@"init: %p (living: %lld)", self, __initedCount);
-  [__livings addObject:[NSString stringWithFormat:@"%p", self]];
-#endif
+  #endif
   
   return self;
 }
 
 - (void)dealloc {
   __initedCount--;
-#ifdef DEBUG_MCCURLConnection
+  
+  #ifdef DEBUG_MCCURLConnection
+  [__watchdog unwatchObject:self];
   NSLog(@"dealloc: %p (left: %lld)", self, __initedCount);
-  [__livings removeObject:[NSString stringWithFormat:@"%p", self]];
-#endif
+  #endif
+  
+  if (_isContext) {
+    #ifdef DEBUG_MCCURLConnection
+    if (self.connections.count) NSLog(@"Cleaning context connections: %d", self.connections.count);
+    #endif
+    for (MCCURLConnection *c in self.connections) {
+    #ifdef DEBUG_MCCURLConnection
+      NSLog(@"Cancelling connection: %p", c);
+    #endif
+      [c cancel];
+    }
+    self.connections = nil;
+  }
+  
   self.response = nil;
   self.data = nil;
   self.error = nil;
   self.userInfo = nil;
   self.identifier = nil;
-  [_context release];
   [_queue release];
   [_onRequest release];
   self.uconnection = nil;
@@ -117,8 +219,6 @@ static long long __initedCount = 0;
   
   [super dealloc];
 }
-
-#define MARK NSLog(@"%@ %@", [self isContext] ? @"Context" : @"Connection", NSStringFromSelector(_cmd))
 
 
 
@@ -140,22 +240,18 @@ static id <NSURLConnectionDelegate> __authenticationDelegate = nil;
 + (void)setAuthenticationDelegate:(id<NSURLConnectionDelegate>)authDelegate { __authenticationDelegate = authDelegate; }
 + (id<NSURLConnectionDelegate>)authenticationDelegate { return __authenticationDelegate; }
 
+static NSMutableArray *__connections = nil;
++ (NSMutableArray*)connections { return __connections; }
+
 
 + (NSString *)log {
   NSMutableString *l = [NSMutableString stringWithFormat:@"%@: Living: (%lld), Enforced ongoings (%ld):\n", NSStringFromClass(self), __initedCount, (unsigned long)__ongoings.allKeys.count];
   [__ongoings enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) { [l appendFormat:@"\t%p (%@)\n", obj, key]; }];
+  [l appendFormat:@"\nLive connections: %d\n", self.connections.count];
+  for (MCCURLConnection *c in self.connections) {
+    [l appendFormat:@"\t%p: %@ (state: %@, finishedState: %@)\n", c, c.identifier, NSStringFromState(c.state), NSStringFromFinishedState(c.finishedState)];
+  }
   return l;
-}
-
-#ifdef DEBUG_MCCURLConnection
-static NSMutableArray *__livings = nil;
-#endif
-+ (NSArray *)livings {
-#ifdef DEBUG_MCCURLConnection
-  return __livings;
-#else
-  return nil;
-#endif
 }
 
 
@@ -251,15 +347,17 @@ static NSMutableArray *__livings = nil;
   return [_context authenticationDelegate];
 }
 
+- (NSMutableArray *)connections {
+  if (_isContext) return _connections;
+  return [(MCCURLConnection *)_context connections];
+}
+
 - (BOOL)validateRequest:(NSURLRequest *)request {
-  if (![self shouldEnforceUniqueRequestedResource]) {
-    return YES;
-  }
+  if (![self shouldEnforceUniqueRequestedResource]) return YES;
   
   if (!self.identifier) {
-    NSString *HTTPMethod = [[request HTTPMethod]uppercaseString];
-    
     // Build the unique identifier of the request
+    NSString *HTTPMethod = [[request HTTPMethod]uppercaseString];
     if (!HTTPMethod) {
       self.identifier = [NSString stringWithFormat:@"%@", [request URL]];
     } else {
@@ -332,6 +430,7 @@ static NSMutableArray *__livings = nil;
   context.isContext = TRUE;
   context.context = nil;
   context.queue = __queue;
+  context.connections = [NSMutableArray array];
   return context;
 }
 
@@ -366,7 +465,7 @@ static NSMutableArray *__livings = nil;
   NSAssert(_isContext, @"Only context can create a connection");
   
   MCCURLConnection *connection = [[[[self class]alloc]init]autorelease];
-  connection.context = (id<MCCURLConnectionContextProtocol>)self;
+  connection.context = (MCCURLConnection<MCCURLConnectionContextProtocol>*)self; // Weak reference. You must retain the context
   
   return connection;
 }
@@ -380,8 +479,14 @@ static NSMutableArray *__livings = nil;
 
 - (void)enqueueRequest:(NSURLRequest *)request {
   NSAssert(!_isContext, @"Cannot enqueue a context");
+
+  NSOperationQueue *queue = [self queue];
+  NSAssert(queue, @"No queue!");
   
-  [_queue addOperationWithBlock:^{
+  // We keep a reference to this connection so that we can cancel all of them when the context is released
+  [self.connections addObject:self];
+    
+  [queue addOperationWithBlock:^{
     #ifdef DEBUG_MCCURLConnection
     NSLog(@"Operation start: %p", self);
     #endif
@@ -419,8 +524,7 @@ static NSMutableArray *__livings = nil;
       self.state = ConnectionStateStarted;
     });
     
-    if (shouldReturn) return;
-    
+    if (shouldReturn) goto FINISHED;
     
     do {
       #ifdef DEBUG_MCCURLConnection
@@ -431,7 +535,14 @@ static NSMutableArray *__livings = nil;
       
     } while (!self.shouldCancel && (self.state == ConnectionStateStarted));
     
+    
+  FINISHED:
+    [self.connections removeObject:self];
+    
     #ifdef DEBUG_MCCURLConnection
+    [__watchdog watchObject:self usingBlock:^(id obj) {
+      NSLog(@"Living connection object: %@", [obj description]);
+    }];
     NSLog(@"Operation end: %p", self);
     #endif
   }];
@@ -500,12 +611,19 @@ NS_INLINE NSString *NSStringFromFinishedState(MCCURLConnectionFinishedState stat
 
 - (NSString *)description {
   if (_isContext) {
-    return [NSString stringWithFormat:@"%@ (%p) queue context: %@ (onRequest:%@), enforcement: %@", [self class], self, _queue == __queue ? @"Default Queue" : _queue, _onRequest, [self enforcesUniqueRequestedResource] ? @"Yes": @"No"];
+    NSMutableString *desc = [NSMutableString stringWithFormat:@"%@ (%p) queue context: %@ (onRequest:%@), enforcement: %@", [self class], self, _queue == __queue ? @"Default Queue" : _queue, _onRequest, [self enforcesUniqueRequestedResource] ? @"Yes": @"No"];
+    if (self.connections.count) {
+      [desc appendFormat:@"\nLive connections: %d\n", self.connections.count];
+      for (MCCURLConnection *c in self.connections) {
+        [desc appendFormat:@"\t%p: %@ (state: %@, finishedState: %@)\n", c, c.identifier, NSStringFromState(c.state), NSStringFromFinishedState(c.finishedState)];
+      }
+    }
+    return desc;
   }
   
   NSMutableString *desc = [NSMutableString stringWithFormat:@"%@ (%p) connection\n", [self class], self];
                    [desc appendFormat:@"\tState:            %@\n", NSStringFromState(self.state)];
-                   [desc appendFormat:@"\tQueue:            %@\n", _queue == __queue ? @"Default Queue" : _queue];
+                   [desc appendFormat:@"\tQueue:            %@\n", self.queue == __queue ? @"Default Queue" : _context.queue];
   if (_uconnection)[desc appendFormat:@"\tConnection:       %@\n", _uconnection];
   if (self.state == ConnectionStateFinished)
                    [desc appendFormat:@"\tFinished state:   %@\n", NSStringFromFinishedState(self.finishedState)];
