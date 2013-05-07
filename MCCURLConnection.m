@@ -7,7 +7,7 @@
 
 #import "MCCURLConnection.h"
 
-#define DEBUG_MCCURLConnection
+//#define DEBUG_MCCURLConnection
 
 #pragma mark debugging material
 #ifdef DEBUG_MCCURLConnection
@@ -143,9 +143,8 @@ static dispatch_queue_t __sync = nil;
 static dispatch_queue_t __synchronized = nil; /* Queue used for inter-thread sync like when cancelling a connection */
 static NSMutableDictionary *__ongoings = nil;
 
-
-#ifdef DEBUG_MCCURLConnection
 static long long __initedCount = 0;
+#ifdef DEBUG_MCCURLConnection
 static WatchDog *__watchdog = nil;
 #endif
 
@@ -233,7 +232,7 @@ static void(^__onRequest)(MCCURLConnection *) = nil;
 + (void(^)(MCCURLConnection *))onRequest { return __onRequest; }
 
 static NSOperationQueue *__queue = nil;
-+ (void)setQueue:(NSOperationQueue *)queue { if (__queue) { [__queue release]; } __queue = [queue retain]; }
++ (void)setQueue:(NSOperationQueue *)queue { if (__queue) { [__queue autorelease]; } __queue = [queue retain]; }
 + (NSOperationQueue *)queue { return __queue; }
 
 static id <NSURLConnectionDelegate> __authenticationDelegate = nil;
