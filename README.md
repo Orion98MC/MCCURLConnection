@@ -63,7 +63,7 @@ MCCURLConnection *connection1 = [MCCURLConnection connection];
 MCCURLConnection *connection2 = [MCCURLConnection connectionWithRequest:MyRequest2 onFinished:^(MCCURLConnection *connection) { ... }];
 ```
 
-However, this method enqueues the request automatically. 
+This method enqueues the request automatically. 
 
 
 ####  callbacks
@@ -113,7 +113,7 @@ Each context whether global (Class) or custom (instance) conforms to the MCCURLC
 This callback is run when a connection has just started or finished (state == ConnectionStateStarted || state == ConnectionStateFinished)
 Note that when this callback is set on the global context (Class) it will always be triggered, even from connections bound to a custom context. 
 
-It can be useful to register it in the global context to manage the network activity indicator view application-wide:
+It can be useful to set this callback in the global context to manage the network activity indicator view application-wide:
 
 ```objective-c
 [MCCURLConnection setOnRequest:^(MCCURLConnection *connection) { 
