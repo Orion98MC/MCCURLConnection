@@ -484,6 +484,10 @@ static NSMutableArray *__connections = nil;
   
   // We keep a reference to this connection so that we can cancel all of them when the context is released
   [self.connections addObject:self];
+  
+  dispatch_async(__synchronized, ^{
+    self.state = ConnectionStateEnqueued;
+  });
     
   [queue addOperationWithBlock:^{
     #ifdef DEBUG_MCCURLConnection
@@ -545,10 +549,6 @@ static NSMutableArray *__connections = nil;
     NSLog(@"Operation end: %p", self);
     #endif
   }];
-  
-  dispatch_async(__synchronized, ^{
-    self.state = ConnectionStateEnqueued;
-  });
 }
 
 
